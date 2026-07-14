@@ -12,7 +12,7 @@ to each topic's mission.
 
 | Topic | Mission | Status |
 | ----- | ------- | ------ |
-| AWS Networking | [Serving an app from a private network](./topics/aws-learning/MISSION.md) | In progress |
+| AWS Networking | [Serving an app from a private network](./topics/aws-networking/MISSION.md) | In progress |
 
 <!--
 To add a topic:
