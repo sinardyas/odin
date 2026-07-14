@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 7 · Capstone — Trace Both Journeys</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 7 · Capstone</p>
+<h1>Put it together: trace both journeys, then break things</h1>
+<p class="subtitle">No new facts. This is the test of whether it <em>stuck</em> — reconstruct from memory, then diagnose.</p>
+
+<div class="mission">
+  <b>Where this sits →</b> Your <a href="../MISSION.md">mission</a> was to understand this architecture well
+  enough to <em>draw it from memory</em> and <em>trace a request through it</em>. That's literally this lesson.
+  Everything is on the <a href="../reference/blueprint.html">blueprint</a> — but try hard to answer before you peek.
+</div>
+
+<div class="note">
+  <span class="callout-label">How to do this lesson</span>
+  For each prompt below, <b>say the answer out loud or write it down first</b>, then expand to check. The
+  effort of retrieving — even when you're not sure — is what converts fluency into durable memory. Peeking
+  first feels easier and teaches you almost nothing.
+</div>
+
+<h2>Part A · The user's journey, from a blank page</h2>
+<p>A user types your app's URL. Name every hop the request takes, in order, and one word on each hop's role.</p>
+
+<details class="reveal">
+  <summary>Reveal the user path (①→②)</summary>
+  <div class="answer">
+    <ol>
+      <li><b>Internet Gateway</b> — the one door into the VPC (Lesson 2).</li>
+      <li><b>Application Load Balancer</b> — public front door in the public subnets; the only thing with a public DNS name (Lesson 4).</li>
+      <li><b>Listener → target group</b> — the ALB forwards to a pool of healthy servers (Lesson 4).</li>
+      <li><b>EC2 app server</b> — in a private subnet, no public IP, reached over the <code>local</code> route (Lessons 1 &amp; 3).</li>
+      <li>The response returns back out the same chain. <b>No server ever had a public IP.</b></li>
+    </ol>
+  </div>
+</details>
+
+<details class="reveal">
+  <summary>Reveal: which security-group rules made that path legal, and no other?</summary>
+  <div class="answer">
+    ALB's SG: <b>allow 443 from <code>0.0.0.0/0</code></b> (the internet). App server's SG:
+    <b>allow the app port from the ALB's security group</b> — not an IP range, so it survives scaling. Anything
+    that skips the ALB matches no rule and is dropped (Lesson 5).
+  </div>
+</details>
+
+<h2>Part B · Your journey, from a blank page</h2>
+<p>Now <em>you</em> need to SSH into <code>10.0.11.5</code> to check a log. It has no public IP and its SG
+only trusts the ALB. Walk the path — and don't forget the gotcha.</p>
+
+<details class="reveal">
+  <summary>Reveal the admin path (Ⓐ→Ⓑ)</summary>
+  <div class="answer">
+    <ol>
+      <li>Your laptop's OpenVPN client connects to the <b>Client VPN endpoint</b> and authenticates (Lesson 6).</li>
+      <li>You're handed a private address from the <b>client CIDR range</b> — your laptop is now <em>inside</em> the VPC's world.</li>
+      <li>You reach <code>10.0.11.5</code> directly over the <b><code>local</code> route</b> — the same one internal resources use (Lesson 2).</li>
+      <li><b>The gotcha:</b> the server's <b>security group must still allow port 22 from the VPN</b>. Being on the network isn't permission (Lesson 5).</li>
+    </ol>
+  </div>
+</details>
+
+<details class="reveal">
+  <summary>Reveal: why not just use a bastion host or give the server a public IP?</summary>
+  <div class="answer">
+    A public IP throws away the private design entirely. A bastion works but is a permanent internet-facing
+    machine <em>you</em> must patch and defend. Client VPN gives you inside-the-network access with no public
+    jump box to run (Lesson 6).
+  </div>
+</details>
+
+<h2>Part C · Spot the broken config</h2>
+<p>Real understanding shows up in diagnosis. Each scenario has one root cause — pick it from memory.</p>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">D1.</span> Users get timeouts. The ALB is up, but every target shows <b>unhealthy</b>. Root cause?</div>
+  <button class="opt" data-key="A">The private subnet is missing its route to the NAT</button>
+  <button class="opt" data-key="B">The server's group won't accept traffic from the ALB</button>
+  <button class="opt" data-key="C">The Client VPN endpoint was never associated at all</button>
+  <div class="feedback right" data-for="right">Correct. Health checks fail because the app server's security group doesn't allow the app port from the ALB's SG, so the ALB can't even reach it. (NAT is about outbound; VPN is the admin path — neither is in the user flow.)</div>
+  <div class="feedback wrong" data-for="wrong">The ALB can't reach the targets: the server's security group isn't allowing the app port from the ALB's SG (Lesson 5). NAT and VPN aren't part of the user request path.</div>
+</div>
+
+<div class="quiz" data-answer="A">
+  <div class="q"><span class="num">D2.</span> Users load the site fine, but the app server's <code>apt update</code> hangs forever. Root cause?</div>
+  <button class="opt" data-key="A">The private route table has no path out to a NAT</button>
+  <button class="opt" data-key="B">The load balancer listener is on the wrong port now</button>
+  <button class="opt" data-key="C">The server was never given its own public IP address</button>
+  <div class="feedback right" data-for="right">Correct. Inbound (via ALB) works, but outbound needs 0.0.0.0/0 → NAT in the private route table (Lesson 3). A public IP is exactly what we avoid — the NAT is the outbound answer.</div>
+  <div class="feedback wrong" data-for="wrong">Inbound works; outbound is broken. The private subnet needs 0.0.0.0/0 → NAT (Lesson 3). We deliberately give the server no public IP — the NAT handles egress.</div>
+</div>
+
+<div class="quiz" data-answer="C">
+  <div class="q"><span class="num">D3.</span> Your VPN connects successfully, but <code>ssh 10.0.11.5</code> just times out. Root cause?</div>
+  <button class="opt" data-key="A">The client CIDR range overlaps the VPC's own range</button>
+  <button class="opt" data-key="B">The internet gateway needs a route to your laptop first</button>
+  <button class="opt" data-key="C">The server's group doesn't allow port 22 from the VPN</button>
+  <div class="feedback right" data-for="right">Correct. You're on the network, but the server's security group still gates the port — add allow-22-from-VPN (Lessons 5 & 6). An overlapping CIDR would usually block the connection from working at all, not just SSH.</div>
+  <div class="feedback wrong" data-for="wrong">Being connected isn't permission — the server's security group must allow port 22 from the VPN (Lessons 5 & 6). The IGW isn't involved in this private, inside-the-VPC path.</div>
+</div>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">D4.</span> The internet can't reach your ALB at all — its DNS name just times out. Likeliest root cause?</div>
+  <button class="opt" data-key="A">The app servers are missing their health-check path</button>
+  <button class="opt" data-key="B">The ALB sits in private subnets with no route out</button>
+  <button class="opt" data-key="C">The NAT gateway is processing too many gigabytes</button>
+  <div class="feedback right" data-for="right">Correct. An internet-facing ALB must live in public subnets (0.0.0.0/0 → IGW). Placed in private subnets, nothing from outside can reach it (Lessons 2 & 4).</div>
+  <div class="feedback wrong" data-for="wrong">An internet-facing ALB must sit in public subnets with a route to the IGW (Lessons 2 & 4). Unhealthy targets or NAT throughput wouldn't make the ALB itself unreachable.</div>
+</div>
+
+<h2>Part D · Draw the whole thing from memory</h2>
+<p>Final challenge. On a blank page, sketch the full architecture — then check yourself against this list. If
+you can produce ten of these twelve with their one-line role, your mission is met.</p>
+
+<details class="reveal">
+  <summary>Reveal the twelve boxes to check against</summary>
+  <div class="answer">
+    <b>VPC</b> (private network, a CIDR) ·
+    <b>2 Availability Zones</b> (survive one datacenter failing) ·
+    <b>public subnets</b> (route to IGW) ·
+    <b>private subnets</b> (no route to IGW) ·
+    <b>route tables</b> (what makes each subnet public or private) ·
+    <b>Internet Gateway</b> (the door) ·
+    <b>NAT Gateway</b> (outbound-only valve) ·
+    <b>Application Load Balancer</b> (public front door) ·
+    <b>EC2 app servers</b> (private, no public IP) ·
+    <b>Security Groups</b> (per-resource, stateful firewall) ·
+    <b>Client VPN</b> (your way inside) ·
+    and the two <b>journeys</b> that connect them. Full picture:
+    <a href="../reference/blueprint.html">the blueprint</a>.
+  </div>
+</details>
+
+<div class="cost">
+  <span class="callout-label">Bonus recall · which four things bill while idle?</span>
+  <b>NAT Gateway</b> (per hour + per GB), <b>ALB</b> (per hour + LCU), <b>Client VPN</b> (per association-hour
+  + per connection-hour), and each <b>public IPv4</b> address. The VPC, subnets, route tables, IGW, and security
+  groups themselves are free to define.
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Now go get wisdom · the community</span>
+  You've got the model; the next gains come from real-world friction. <a href="https://repost.aws/tags/TATGuEiYydTVCPMhSnXFN6gA/amazon-vpc">AWS re:Post — the Amazon VPC tag</a>
+  is AWS's own moderated Q&amp;A (answers often from AWS staff). Post your architecture, ask "is this sane?",
+  or read others' broken-config threads — they're this lesson's Part C, live.
+</div>
+
+<div class="ask-teacher">
+  <b>You've reached the end of the core arc — well done.</b> If any Part C question stung, tell me which and
+  we'll build a targeted review lesson. When you're ready to leave concepts behind, I can take you into the
+  things we marked out of scope: <b>building this for real</b> in the console, or as repeatable
+  <b>Terraform / CloudFormation</b>. Just say the word.
+</div>
+
+<nav class="lesson-nav">
+  <a href="0006-client-vpn.html">← Lesson 6: Client VPN</a>
+  <a href="../reference/blueprint.html">Blueprint ↑</a>
+  <span class="disabled">🎉 Core course complete</span>
+</nav>
+
+<p class="meta">AWS Networking course · lesson 0007 (capstone) · built 2026-07-13</p>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

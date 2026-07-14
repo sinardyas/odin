@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 · The Private Network (VPC &amp; Subnets)</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 1 · Foundation</p>
+<h1>The private network itself: VPC &amp; subnets</h1>
+<p class="subtitle">Before load balancers, before VPNs — the empty plot of land everything else gets built on.</p>
+
+<div class="mission">
+  <b>Where this sits →</b> You can launch an EC2 instance, but the <em>network</em> it lands in is a
+  black box. This lesson opens the outermost layer of the <a href="../reference/blueprint.html">blueprint</a>:
+  the VPC and the subnets inside it. Every later box lives inside these.
+</div>
+
+<h2>1. A VPC is a private plot of land with an address range</h2>
+<p>A <b>VPC (Virtual Private Cloud)</b> is your own isolated network inside AWS. Nothing can enter or
+leave it except through doors <em>you</em> add. You define it with one thing up front: a range of
+private IP addresses, written in <b>CIDR</b> notation.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html" title="What is Amazon VPC">[aws]</a></p>
+
+<pre>10.0.0.0/16     ← the whole VPC
+└─ the "/16" means: the first 16 bits are fixed (10.0.*.*)
+   → 65,536 addresses to hand out, from 10.0.0.0 to 10.0.255.255</pre>
+
+<p>Read the slash as "how much is locked down." A smaller number = a <em>bigger</em> range:
+<code>/16</code> is huge (65k), <code>/24</code> is modest (256), <code>/28</code> is tiny (16).
+That's the whole trick to reading these.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html" title="VPC CIDR blocks">[aws]</a></p>
+
+<h2>2. Subnets carve the plot into usable lots</h2>
+<p>You don't put servers directly in the VPC. You slice its address range into <b>subnets</b> — smaller
+ranges, each living in exactly one <b>Availability Zone</b> (a physically separate datacenter).<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html" title="Configure subnets">[aws]</a></p>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 220" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="8" y="8" width="624" height="204" rx="8" fill="none" stroke="#8a4a12" stroke-width="2"/>
+  <text x="20" y="28" font-size="12" font-weight="700" fill="#8a4a12">VPC  10.0.0.0/16   (65,536 addresses)</text>
+  <!-- AZ A -->
+  <rect x="24" y="40" width="288" height="160" rx="6" fill="#fafafa" stroke="#ccc" stroke-dasharray="5 4"/>
+  <text x="36" y="58" font-size="11" font-weight="600" fill="#6b6b6b">Availability Zone A</text>
+  <rect x="38" y="70" width="260" height="48" rx="5" fill="#eef7ef" stroke="#2e7d32" stroke-width="1.4"/>
+  <text x="50" y="90" font-size="12" font-weight="600" fill="#2e7d32">PUBLIC  10.0.1.0/24</text>
+  <text x="50" y="107" font-size="10" fill="#6b6b6b">256 addresses · faces the internet</text>
+  <rect x="38" y="128" width="260" height="48" rx="5" fill="#eef4fb" stroke="#1565c0" stroke-width="1.4"/>
+  <text x="50" y="148" font-size="12" font-weight="600" fill="#1565c0">PRIVATE  10.0.11.0/24</text>
+  <text x="50" y="165" font-size="10" fill="#6b6b6b">256 addresses · hidden away</text>
+  <!-- AZ B -->
+  <rect x="328" y="40" width="288" height="160" rx="6" fill="#fafafa" stroke="#ccc" stroke-dasharray="5 4"/>
+  <text x="340" y="58" font-size="11" font-weight="600" fill="#6b6b6b">Availability Zone B</text>
+  <rect x="342" y="70" width="260" height="48" rx="5" fill="#eef7ef" stroke="#2e7d32" stroke-width="1.4"/>
+  <text x="354" y="90" font-size="12" font-weight="600" fill="#2e7d32">PUBLIC  10.0.2.0/24</text>
+  <text x="354" y="107" font-size="10" fill="#6b6b6b">a copy, in a 2nd datacenter</text>
+  <rect x="342" y="128" width="260" height="48" rx="5" fill="#eef4fb" stroke="#1565c0" stroke-width="1.4"/>
+  <text x="354" y="148" font-size="12" font-weight="600" fill="#1565c0">PRIVATE  10.0.12.0/24</text>
+  <text x="354" y="165" font-size="10" fill="#6b6b6b">a copy, in a 2nd datacenter</text>
+</svg>
+<figcaption>One <code>/16</code> VPC, carved into four <code>/24</code> subnets — a public + private pair in each of two AZs.</figcaption>
+</figure>
+
+<p><b>Why two of everything?</b> If Availability Zone A's datacenter loses power, a design that lives
+only in AZ A goes dark with it. Duplicating your subnets across AZ A <em>and</em> AZ B means one
+datacenter can fail and your app stays up. This is the reflex behind almost every production AWS
+diagram.<a class="cite" href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html" title="Regions and Zones">[aws]</a></p>
+
+<div class="note">
+  <span class="callout-label">A small "gotcha" for later</span>
+  A <code>/24</code> has 256 addresses but AWS reserves 5 in every subnet, so you actually get
+  <b>251</b> usable ones. Worth knowing when a subnet mysteriously "fills up."<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html" title="Subnet sizing">[aws]</a>
+</div>
+
+<h2>3. "Public" and "private" are roles, not walls</h2>
+<p>Notice the diagram labels some subnets <span class="public">public</span> and some
+<span class="private">private</span>. Here's the part that surprises most people:
+<b>those labels aren't a setting you toggle.</b> A subnet is "public" only because of a rule in its
+route table that sends internet traffic to a gateway — and "private" simply means that rule is absent.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html" title="Subnet types">[aws]</a></p>
+
+<div class="gotcha">
+  <span class="callout-label">Don't memorise this wrong</span>
+  There is no "make this public" checkbox that matters. <b>The route table decides.</b> We open that
+  box in Lesson 2 — for now, just hold the idea that <em>public vs private is about routing, not naming.</em>
+</div>
+
+<h2>Check yourself</h2>
+<p>Answer from memory — the struggle is what makes it stick.</p>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">Q1.</span> Which CIDR block hands out the most IP addresses?</div>
+  <button class="opt" data-key="A">The block written 10.0.0.0/24</button>
+  <button class="opt" data-key="B">The block written 10.0.0.0/16</button>
+  <button class="opt" data-key="C">The block written 10.0.0.0/28</button>
+  <div class="feedback right" data-for="right">Correct. A smaller slash number fixes fewer bits, leaving more addresses free: /16 = 65,536, /24 = 256, /28 = 16.</div>
+  <div class="feedback wrong" data-for="wrong">Not quite — a smaller number after the slash means a bigger range. /16 (65,536) beats /24 (256) and /28 (16).</div>
+</div>
+
+<div class="quiz" data-answer="C">
+  <div class="q"><span class="num">Q2.</span> Why does the design place a copy of each subnet in a second Availability Zone?</div>
+  <button class="opt" data-key="A">To double the total number of usable IP addresses</button>
+  <button class="opt" data-key="B">Because every single subnet must span two zones</button>
+  <button class="opt" data-key="C">So one datacenter can fail without downing the app</button>
+  <div class="feedback right" data-for="right">Correct. AZs are physically separate datacenters; spreading across two means a single-location failure doesn't take you offline.</div>
+  <div class="feedback wrong" data-for="wrong">The reason is resilience: AZs are separate datacenters, so spreading across two lets one fail without downtime. (A subnet actually lives in exactly one AZ.)</div>
+</div>
+
+<div class="quiz" data-answer="A">
+  <div class="q"><span class="num">Q3.</span> What actually makes a subnet count as "public"?</div>
+  <button class="opt" data-key="A">Its route table sends internet traffic to a gateway</button>
+  <button class="opt" data-key="B">A public checkbox was enabled on the given subnet</button>
+  <button class="opt" data-key="C">It holds more addresses than a private subnet does</button>
+  <div class="feedback right" data-for="right">Correct — it's the route table, not a name or a toggle. This is the single idea that unlocks Lesson 2.</div>
+  <div class="feedback wrong" data-for="wrong">It's the route table: a public subnet has a route sending internet-bound traffic to a gateway. No magic checkbox, and size is irrelevant.</div>
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Primary source · read this next</span>
+  <a href="https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html">“What is Amazon VPC?” — AWS VPC User Guide.</a>
+  Read just the opening overview and the "How it works" section. It's the source of truth for everything above.
+</div>
+
+<div class="ask-teacher">
+  <b>I'm your teacher — use me.</b> If CIDR still feels slippery, or you want to see how a <code>/16</code>
+  splits into <code>/24</code>s bit by bit, just ask. Curious what "reserving 5 addresses" is for? Ask.
+  Every question you ask now is a box you won't stumble on later.
+</div>
+
+<nav class="lesson-nav">
+  <span class="disabled">← (start of course)</span>
+  <a href="../reference/blueprint.html">Blueprint ↑</a>
+  <a href="0002-route-tables-and-igw.html">Lesson 2: Route tables &amp; the Internet Gateway →</a>
+</nav>
+
+<p class="meta">AWS Networking course · lesson 0001 · built 2026-07-13</p>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

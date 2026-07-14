@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 5 · Security Groups</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 5 · The firewall layer</p>
+<h1>Security Groups (and their subnet-level cousin)</h1>
+<p class="subtitle">Routing decides where traffic <em>can</em> go. Security groups decide who's actually <em>allowed</em> to talk.</p>
+
+<div class="mission">
+  <b>Where this sits →</b> Lessons 1–4 built the plumbing: a request can travel internet → ALB → app server.
+  But "can travel" isn't "is permitted." This lesson adds the <b>Security Group</b> boxes from the
+  <a href="../reference/blueprint.html">blueprint</a> — the per-resource firewall that makes the design tight
+  instead of merely functional.
+</div>
+
+<h2>1. Routing ≠ permission</h2>
+<p>A route table answers "which door does traffic bound for X leave through?" It never asks "should this
+sender be talking to this receiver at all?" Without a firewall, <em>anything</em> that can route to your app
+server — every other resource in the VPC — could knock on its door. We want exactly one thing to be allowed
+in: the load balancer.</p>
+
+<h2>2. A Security Group is a stateful, allow-only firewall around a resource</h2>
+<p>A <b>Security Group (SG)</b> wraps an individual resource (an instance, the ALB, etc.) with two short lists:
+<b>inbound</b> rules and <b>outbound</b> rules. Three properties define how it behaves:<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/infrastructure-security.html" title="Security groups">[aws]</a></p>
+<dl class="terms">
+  <dt>Allow-only</dt>
+  <dd>You can only write "allow" rules. There's no "deny." If no rule permits a packet, it's dropped by default.</dd>
+  <dt>Stateful</dt>
+  <dd>If you allow a request <em>in</em>, its reply is automatically allowed back <em>out</em> — you never write
+    return rules. This is the big one, and the sharpest contrast with NACLs below.</dd>
+  <dt>Per-resource</dt>
+  <dd>It attaches to the resource itself, not the subnet. Two servers in the same subnet can have completely
+    different security groups.</dd>
+</dl>
+
+<h2>3. The trick: a rule can name another security group</h2>
+<p>This is the feature that completes Lesson 4. A security-group rule's <em>source</em> doesn't have to be an
+IP range — it can be <b>another security group</b>. So the app server's rule reads, literally, "allow inbound
+on my app port <em>from whatever is in the load balancer's security group</em>" — no IP addresses, no matter
+how many servers scale up or down.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/infrastructure-security.html" title="SG referencing">[aws]</a></p>
+
+<p>Chain them and the whole path becomes a series of "who may talk to whom" statements:</p>
+
+<table>
+  <thead><tr><th>Security group on…</th><th>Inbound rule</th><th>In plain words</th></tr></thead>
+  <tbody>
+    <tr><td class="public">the ALB</td><td>HTTPS:443 from <code>0.0.0.0/0</code></td><td>"The whole internet may reach me on 443."</td></tr>
+    <tr><td class="private">the app server</td><td>app port from <b>ALB's SG</b></td><td>"Only the load balancer may reach me — no one else."</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <span class="callout-label">Now the design is actually tight</span>
+  Even though the app server sits in a routable VPC, the <em>only</em> traffic it accepts comes from the ALB.
+  A compromised neighbour in the same subnet still can't open a connection to it. Routing made the path
+  possible; the security group made it <em>exclusive</em>.
+</div>
+
+<h2>4. The other firewall: Network ACLs (know it exists)</h2>
+<p>There's a second, subnet-level firewall called a <b>Network ACL (NACL)</b>. You'll rarely touch it — most
+designs leave it at its default "allow everything" and do the real work in security groups — but you should
+know how it differs, because AWS puts them side by side:<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/infrastructure-security.html" title="SG vs NACL">[aws]</a></p>
+
+<table>
+  <thead><tr><th></th><th>Security Group</th><th>Network ACL</th></tr></thead>
+  <tbody>
+    <tr><td>Wraps</td><td>a resource (instance/ALB)</td><td>a whole subnet</td></tr>
+    <tr><td>Rules</td><td>allow only</td><td>allow <em>and</em> deny</td></tr>
+    <tr><td>State</td><td>stateful (replies auto-allowed)</td><td>stateless (must allow both directions)</td></tr>
+    <tr><td>You'll use it</td><td>constantly — the main tool</td><td>rarely — usually left at default</td></tr>
+  </tbody>
+</table>
+
+<p>Rule of thumb: <b>reach for security groups first.</b> Only drop to NACLs when you need a blunt,
+subnet-wide <em>deny</em> (e.g. block a bad IP range) — something SGs, being allow-only, can't express.</p>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 210" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs><marker id="g5" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2e7d32"/></marker>
+  <marker id="r5" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#c0392b"/></marker></defs>
+  <ellipse cx="70" cy="100" rx="52" ry="30" fill="#eef" stroke="#889" stroke-width="1.4"/>
+  <text x="70" y="98" text-anchor="middle" font-size="11" font-weight="700">Internet</text>
+  <text x="70" y="112" text-anchor="middle" font-size="9" fill="#6b6b6b">0.0.0.0/0</text>
+  <!-- ALB -->
+  <rect x="200" y="66" width="140" height="68" rx="6" fill="#eef7ef" stroke="#2e7d32" stroke-width="1.5"/>
+  <text x="270" y="88" text-anchor="middle" font-size="12" font-weight="700" fill="#2e7d32">ALB</text>
+  <text x="270" y="104" text-anchor="middle" font-size="9" fill="#444">SG: allow 443</text>
+  <text x="270" y="116" text-anchor="middle" font-size="9" fill="#444">from internet</text>
+  <!-- app server -->
+  <rect x="430" y="66" width="150" height="68" rx="6" fill="#eef4fb" stroke="#1565c0" stroke-width="1.5"/>
+  <text x="505" y="88" text-anchor="middle" font-size="12" font-weight="700" fill="#1565c0">App server</text>
+  <text x="505" y="104" text-anchor="middle" font-size="9" fill="#444">SG: allow app port</text>
+  <text x="505" y="116" text-anchor="middle" font-size="9" fill="#444">from ALB's SG only</text>
+  <!-- allowed flows -->
+  <line x1="122" y1="100" x2="196" y2="100" stroke="#2e7d32" stroke-width="2" marker-end="url(#g5)"/>
+  <line x1="340" y1="100" x2="426" y2="100" stroke="#2e7d32" stroke-width="2" marker-end="url(#g5)"/>
+  <!-- blocked flow -->
+  <path d="M70,130 C70,185 505,190 505,138" fill="none" stroke="#c0392b" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#r5)"/>
+  <text x="290" y="185" text-anchor="middle" font-size="10" fill="#c0392b">✗ internet → app server directly: no rule allows it</text>
+</svg>
+<figcaption>The app server's security group names the ALB's group as its only allowed source. Traffic that skips the ALB has no rule permitting it, so it's dropped.</figcaption>
+</figure>
+
+<h2>Check yourself</h2>
+<p>From memory — mixing in Lessons 2 and 4.</p>
+
+<div class="quiz" data-answer="C">
+  <div class="q"><span class="num">Q1.</span> What does "stateful" mean for a security group?</div>
+  <button class="opt" data-key="A">It permanently records every packet that it has seen</button>
+  <button class="opt" data-key="B">It applies to the entire subnet rather than one host</button>
+  <button class="opt" data-key="C">A reply to an allowed request is let back automatically</button>
+  <div class="feedback right" data-for="right">Correct. If inbound is allowed, the matching response is allowed back out without a separate rule. NACLs, being stateless, need both directions written explicitly.</div>
+  <div class="feedback wrong" data-for="wrong">Stateful means the reply to an allowed request returns automatically — no return rule needed. (The subnet-wide, both-directions one is the NACL.)</div>
+</div>
+
+<div class="quiz" data-answer="A">
+  <div class="q"><span class="num">Q2.</span> How does the app server's rule best express "only the load balancer may reach me"?</div>
+  <button class="opt" data-key="A">Allow the app port from the ALB's own security group</button>
+  <button class="opt" data-key="B">Deny every source except the load balancer's address</button>
+  <button class="opt" data-key="C">Add a route pointing traffic back toward the balancer</button>
+  <div class="feedback right" data-for="right">Correct. Naming the ALB's security group as the source needs no IPs and survives servers scaling in and out. Security groups are allow-only, so there's no "deny," and routing isn't permission.</div>
+  <div class="feedback wrong" data-for="wrong">You name the ALB's security group as the allowed source. Security groups can't "deny" (allow-only), and route tables decide paths, not permission.</div>
+</div>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">Q3.</span> You must block one specific bad IP range across a whole subnet. Which tool fits?</div>
+  <button class="opt" data-key="A">A security group, since it wraps each resource</button>
+  <button class="opt" data-key="B">A network ACL, since it can deny across a subnet</button>
+  <button class="opt" data-key="C">A route table, by removing that range's route out</button>
+  <div class="feedback right" data-for="right">Correct. Security groups are allow-only, so they can't express "deny this range." A NACL is stateless, subnet-wide, and supports deny rules — the right tool for a blunt block.</div>
+  <div class="feedback wrong" data-for="wrong">Security groups can't deny (allow-only). A NACL is the subnet-wide firewall that supports deny rules — the right fit for blocking a range.</div>
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Primary source · read this next</span>
+  <a href="https://docs.aws.amazon.com/vpc/latest/userguide/infrastructure-security.html">“Infrastructure security in Amazon VPC” — AWS VPC User Guide.</a>
+  Read the security-group section and the official SG-vs-NACL comparison table. It's the source for everything above.
+</div>
+
+<div class="ask-teacher">
+  <b>Ask me anything.</b> Want to see the exact outbound rules (they matter for the NAT path from Lesson 3),
+  or why security-group-referencing beats hardcoding IPs when Auto Scaling is involved, or what the
+  <em>default</em> security group allows? Ask — this is the layer where "it won't connect" and "it's too open"
+  both get diagnosed.
+</div>
+
+<nav class="lesson-nav">
+  <a href="0004-application-load-balancer.html">← Lesson 4: Load Balancer</a>
+  <a href="../reference/blueprint.html">Blueprint ↑</a>
+  <a href="0006-client-vpn.html">Lesson 6: Client VPN →</a>
+</nav>
+
+<p class="meta">AWS Networking course · lesson 0005 · built 2026-07-13</p>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

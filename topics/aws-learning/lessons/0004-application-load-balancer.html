@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 4 · The Application Load Balancer</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 4 · The public front door</p>
+<h1>The Application Load Balancer</h1>
+<p class="subtitle">How the internet reaches your app while every server stays private — the payoff the whole course is named after.</p>
+
+<div class="mission">
+  <b>Where this sits →</b> Your app servers are private: no public IP, no inbound route (Lessons 2–3).
+  So how does a user ever load the app? This lesson fills the <b>Application Load Balancer</b> box in the
+  <a href="../reference/blueprint.html">blueprint</a> — the one public thing that lets the private things stay private.
+</div>
+
+<h2>1. The front-door trick</h2>
+<p>Remember the three conditions for internet reachability from <a href="0002-route-tables-and-igw.html">Lesson 2</a>:
+an IGW attached, a <code>0.0.0.0/0 → igw</code> route, and a <b>public IP</b>. Your app servers deliberately
+fail the third. So instead of exposing them, you put <em>one</em> resource in the
+<span class="public">public</span> subnets that satisfies all three, and let it speak to the servers on the
+internet's behalf. That resource is the <b>Application Load Balancer (ALB)</b>.<a class="cite" href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html" title="What is an ALB">[aws]</a></p>
+
+<p>The user only ever talks to the ALB. The ALB — sitting <em>inside</em> your VPC — turns around and forwards
+the request to a private server over the <code>local</code> route. The internet never sees the server; it
+sees the load balancer's public DNS name and nothing else.</p>
+
+<div class="note">
+  <span class="callout-label">Why "load balancer," not just "gateway"?</span>
+  It also spreads incoming requests across <em>many</em> app servers, so no single one is overwhelmed — and
+  it works at <b>Layer 7</b>, meaning it understands HTTP and can route by URL path or hostname
+  (e.g. <code>/api</code> to one pool, <code>/</code> to another).<a class="cite" href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html" title="ALB Layer 7">[aws]</a>
+</div>
+
+<h2>2. Three words that describe every ALB</h2>
+<dl class="terms">
+  <dt>Listener</dt>
+  <dd>What the ALB accepts at the front: a protocol + port, like <b>HTTP:80</b> or <b>HTTPS:443</b>.
+    "I'm listening for web requests here."</dd>
+  <dt>Target group</dt>
+  <dd>The pool of destinations behind it — your private <b>EC2 app servers</b>. The listener forwards
+    matching requests to a target group.</dd>
+  <dt>Health check</dt>
+  <dd>The ALB pings each target on a path (say <code>/health</code>) and <b>only sends traffic to the ones
+    that answer</b>. A crashed server is quietly skipped.<a class="cite" href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html" title="Health checks">[aws]</a></dd>
+</dl>
+
+<p>Read it as a sentence: <em>a <b>listener</b> on HTTPS:443 forwards requests to a <b>target group</b> of app
+servers, skipping any that fail their <b>health check</b>.</em> That single line is 90% of an ALB.</p>
+
+<h2>3. Spanning both AZs — the HA reflex returns</h2>
+<p>You place the ALB across <em>both</em> <span class="public">public</span> subnets (one per Availability
+Zone, from <a href="0001-the-private-network.html">Lesson 1</a>). It then balances across app servers in
+<em>both</em> <span class="private">private</span> subnets. If AZ A's datacenter fails, the ALB simply stops
+sending there and keeps serving from AZ B. The multi-AZ shape you set up in Lesson 1 is what makes this
+resilience automatic.</p>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="g4" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2e7d32"/></marker>
+    <marker id="k4" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#555"/></marker>
+  </defs>
+  <ellipse cx="320" cy="22" rx="78" ry="18" fill="#eef" stroke="#889" stroke-width="1.4"/>
+  <text x="320" y="27" text-anchor="middle" font-size="12" font-weight="700">A user on the Internet</text>
+  <rect x="262" y="52" width="116" height="26" rx="4" fill="#fff" stroke="#b5651d" stroke-width="1.5"/>
+  <text x="320" y="69" text-anchor="middle" font-size="11">Internet Gateway</text>
+  <!-- VPC -->
+  <rect x="20" y="92" width="600" height="196" rx="8" fill="none" stroke="#8a4a12" stroke-width="1.8"/>
+  <text x="34" y="110" font-size="11" font-weight="700" fill="#8a4a12">VPC 10.0.0.0/16</text>
+  <!-- ALB spanning public -->
+  <rect x="150" y="120" width="340" height="34" rx="6" fill="#2e7d32"/>
+  <text x="320" y="137" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Application Load Balancer</text>
+  <text x="320" y="149" text-anchor="middle" fill="#eef" font-size="9">public subnets · listener HTTPS:443</text>
+  <!-- AZ A private -->
+  <rect x="40" y="176" width="260" height="96" rx="6" fill="#eef4fb" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="52" y="194" font-size="10" font-weight="600" fill="#1565c0">PRIVATE subnet · AZ A</text>
+  <rect x="80" y="206" width="180" height="42" rx="4" fill="#fff" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="170" y="224" text-anchor="middle" font-size="11" font-weight="600">EC2 app server</text>
+  <text x="170" y="238" text-anchor="middle" font-size="9" fill="#6b6b6b">target · healthy ✓</text>
+  <!-- AZ B private -->
+  <rect x="340" y="176" width="260" height="96" rx="6" fill="#eef4fb" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="352" y="194" font-size="10" font-weight="600" fill="#1565c0">PRIVATE subnet · AZ B</text>
+  <rect x="380" y="206" width="180" height="42" rx="4" fill="#fff" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="470" y="224" text-anchor="middle" font-size="11" font-weight="600">EC2 app server</text>
+  <text x="470" y="238" text-anchor="middle" font-size="9" fill="#6b6b6b">target · healthy ✓</text>
+  <!-- flows -->
+  <line x1="320" y1="40" x2="320" y2="50" stroke="#555" stroke-width="1.5" marker-end="url(#k4)"/>
+  <line x1="320" y1="78" x2="320" y2="118" stroke="#2e7d32" stroke-width="2" marker-end="url(#g4)"/>
+  <path d="M280,154 C240,170 200,185 175,204" fill="none" stroke="#2e7d32" stroke-width="1.8" marker-end="url(#g4)"/>
+  <path d="M360,154 C400,170 445,185 468,204" fill="none" stroke="#2e7d32" stroke-width="1.8" marker-end="url(#g4)"/>
+</svg>
+<figcaption>The user reaches only the ALB (public). The ALB forwards to healthy private targets in either AZ. Journey ① from the blueprint, fully assembled.</figcaption>
+</figure>
+
+<h2>4. Trace the whole path (this is the win)</h2>
+<p>You now know every hop. Follow a single HTTP request from a user's browser to your code:</p>
+<pre>Browser
+  → Internet Gateway        (the door into the VPC — Lesson 2)
+  → Application Load Balancer  (public subnet, has the public DNS — this lesson)
+  → target group            (listener forwards to healthy servers)
+  → EC2 app server          (private subnet, no public IP — Lessons 1 & 3)
+  → your app responds, back out the same way</pre>
+<p>Nowhere in that chain did a server need a public IP. <em>That</em> is "serve an app to the internet from a
+private network."</p>
+
+<div class="cost">
+  <span class="callout-label">Cost radar</span>
+  An ALB bills per <b>hour</b> it runs plus per <b>LCU</b> (a bundled unit of connections, bandwidth, and
+  rules used).<a class="cite" href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html" title="ELB">[aws]</a> Smaller than a NAT bill for light traffic, but it's another always-on meter — one ALB
+  usually fronts many servers, so you run one, not one-per-server.
+</div>
+
+<h2>Check yourself</h2>
+<p>From memory — pulling Lessons 1–3 back in on purpose.</p>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">Q1.</span> How does a user reach an app server that has no public IP?</div>
+  <button class="opt" data-key="A">The server is given a public IP at request time</button>
+  <button class="opt" data-key="B">The load balancer receives it and forwards it in</button>
+  <button class="opt" data-key="C">The NAT gateway pulls the request into the subnet</button>
+  <div class="feedback right" data-for="right">Correct. The ALB is the only public-facing piece; it accepts the request and forwards it to a private server over the VPC's local route. The server stays private.</div>
+  <div class="feedback wrong" data-for="wrong">The ALB is the public front door — it receives the request and forwards it inward. Servers never get a public IP, and NAT is outbound-only (Lesson 3).</div>
+</div>
+
+<div class="quiz" data-answer="A">
+  <div class="q"><span class="num">Q2.</span> What does an ALB's health check accomplish?</div>
+  <button class="opt" data-key="A">It routes traffic only to servers that respond well</button>
+  <button class="opt" data-key="B">It gives each server a public address to answer on</button>
+  <button class="opt" data-key="C">It blocks all inbound traffic from the open internet</button>
+  <div class="feedback right" data-for="right">Correct. The ALB probes each target and quietly skips any that fail, so users aren't sent to a crashed server.</div>
+  <div class="feedback wrong" data-for="wrong">Health checks let the ALB send traffic only to targets that respond, skipping unhealthy ones. They don't assign IPs or act as the firewall.</div>
+</div>
+
+<div class="quiz" data-answer="C">
+  <div class="q"><span class="num">Q3.</span> Which subnets does the internet-facing ALB itself sit in?</div>
+  <button class="opt" data-key="A">The private subnets, next to the app servers it serves</button>
+  <button class="opt" data-key="B">Its own subnet type that is neither public nor private</button>
+  <button class="opt" data-key="C">The public subnets, so the internet can actually reach it</button>
+  <div class="feedback right" data-for="right">Correct. To be the public front door it must be reachable — so it lives in the public subnets (with the IGW route), one per AZ. It then forwards to private targets.</div>
+  <div class="feedback wrong" data-for="wrong">An internet-facing ALB sits in the public subnets so the internet can reach it; from there it forwards to the private app servers.</div>
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Primary source · read this next</span>
+  <a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html">“What is an Application Load Balancer?” — AWS ELB User Guide.</a>
+  Read the overview and the "listener / target group" section. The component diagram there is exactly this lesson.
+</div>
+
+<div class="ask-teacher">
+  <b>Ask me anything.</b> Curious how HTTPS/TLS termination happens at the ALB, the difference between an
+  <em>internet-facing</em> and an <em>internal</em> load balancer, or how it pairs with Auto Scaling to add
+  servers under load? All great next questions — just ask.
+</div>
+
+<nav class="lesson-nav">
+  <a href="0003-nat-gateway.html">← Lesson 3: NAT Gateway</a>
+  <a href="../reference/blueprint.html">Blueprint ↑</a>
+  <a href="0005-security-groups.html">Lesson 5: Security Groups →</a>
+</nav>
+
+<p class="meta">AWS Networking course · lesson 0004 · built 2026-07-13</p>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

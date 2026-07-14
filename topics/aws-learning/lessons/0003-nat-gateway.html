@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 3 · The NAT Gateway</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 3 · Outbound without exposure</p>
+<h1>The NAT Gateway: a one-way valve</h1>
+<p class="subtitle">How a server with no way in still reaches out to the world — and why that's not a contradiction.</p>
+
+<div class="mission">
+  <b>Where this sits →</b> <a href="0002-route-tables-and-igw.html">Lesson 2</a> ended with a private
+  subnet that has <em>no route to the internet</em>. Good for security — but your app servers still need
+  to download OS patches, pull packages, and call external APIs. This lesson fills the
+  <b>NAT Gateway</b> box in the <a href="../reference/blueprint.html">blueprint</a> that resolves the tension.
+</div>
+
+<h2>1. The problem we backed ourselves into</h2>
+<p>A private-subnet server is deliberately unreachable from the internet — that's the whole design. But
+"unreachable" cuts both ways: with only the <code>local</code> route, it also can't reach <em>out</em> to
+run <code>apt update</code> or hit a payment API. We need <b>outbound</b> internet without <b>inbound</b> exposure.</p>
+
+<p>The obvious fix — add <code>0.0.0.0/0 → igw</code> like a public subnet — is <em>wrong here</em>, for two reasons:</p>
+<ul>
+  <li>An Internet Gateway only works for resources that have a <b>public IP</b>. Our servers have none.</li>
+  <li>Even if we gave them one, that door swings <em>both ways</em> — the internet could now start connections <em>in</em>. Exactly what we're avoiding.</li>
+</ul>
+
+<h2>2. The NAT Gateway: outbound-only by design</h2>
+<p>A <b>NAT Gateway</b> is a managed one-way valve. It lives in a <span class="public">public</span>
+subnet and does one job: when a private server sends traffic to the internet, the NAT swaps the server's
+private source address for its own, forwards the request out through the Internet Gateway, and relays the
+reply back.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html" title="NAT Gateway">[aws]</a></p>
+
+<p>The asymmetry is the point: because every conversation must be <em>started from inside</em>, nothing on
+the internet can use the NAT to open a connection <em>to</em> your servers. Outbound: yes. Inbound: impossible.</p>
+
+<div class="note">
+  <span class="callout-label">The mental model</span>
+  An <b>Internet Gateway</b> is a two-way door (needs a public IP, allows inbound). A <b>NAT Gateway</b>
+  is a one-way valve (no public IP on the server, outbound only). Same internet, opposite exposure.
+</div>
+
+<h2>3. It's still just one line in a route table</h2>
+<p>Here's the satisfying part — you already know how this is wired. The <span class="private">private</span>
+subnet's route table gets the <em>same catch-all line</em> from Lesson 2, pointed at a different target:</p>
+
+<table>
+  <thead><tr><th>Destination</th><th>Target</th><th>Subnet type</th></tr></thead>
+  <tbody>
+    <tr><td><code>10.0.0.0/16</code></td><td><code>local</code></td><td>both</td></tr>
+    <tr><td class="public"><code>0.0.0.0/0</code></td><td class="public"><code>igw-…</code></td><td><span class="public">public</span> — traffic goes straight out</td></tr>
+    <tr><td class="private"><code>0.0.0.0/0</code></td><td class="private"><code>nat-…</code></td><td><span class="private">private</span> — traffic goes out <em>via the valve</em></td></tr>
+  </tbody>
+</table>
+
+<p>Public subnet: catch-all → <b>Internet Gateway</b>. Private subnet: catch-all → <b>NAT Gateway</b>.
+Same <code>0.0.0.0/0</code> you met in Lesson 2 — the <em>target</em> is what changes the behaviour.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Route_Tables.html" title="Route tables">[aws]</a></p>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 280" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a3" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#1565c0"/></marker>
+    <marker id="a3b" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#555"/></marker>
+  </defs>
+  <ellipse cx="310" cy="24" rx="70" ry="19" fill="#eef" stroke="#889" stroke-width="1.4"/>
+  <text x="310" y="29" text-anchor="middle" font-size="12" font-weight="700">The Internet</text>
+  <rect x="252" y="58" width="116" height="28" rx="4" fill="#fff" stroke="#b5651d" stroke-width="1.5"/>
+  <text x="310" y="76" text-anchor="middle" font-size="11">Internet Gateway</text>
+  <!-- VPC -->
+  <rect x="24" y="100" width="572" height="168" rx="8" fill="none" stroke="#8a4a12" stroke-width="1.8"/>
+  <text x="38" y="118" font-size="11" font-weight="700" fill="#8a4a12">VPC 10.0.0.0/16</text>
+  <!-- public subnet with NAT -->
+  <rect x="44" y="128" width="250" height="126" rx="6" fill="#eef7ef" stroke="#2e7d32" stroke-width="1.3"/>
+  <text x="56" y="146" font-size="11" font-weight="600" fill="#2e7d32">PUBLIC subnet</text>
+  <rect x="86" y="158" width="166" height="34" rx="4" fill="#fff" stroke="#2e7d32" stroke-width="1.3"/>
+  <text x="169" y="179" text-anchor="middle" font-size="11">NAT Gateway</text>
+  <!-- private subnet with server -->
+  <rect x="326" y="128" width="250" height="126" rx="6" fill="#eef4fb" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="338" y="146" font-size="11" font-weight="600" fill="#1565c0">PRIVATE subnet</text>
+  <rect x="368" y="188" width="166" height="40" rx="4" fill="#fff" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="451" y="205" text-anchor="middle" font-size="11" font-weight="600">EC2 app server</text>
+  <text x="451" y="219" text-anchor="middle" font-size="9" fill="#6b6b6b">no public IP</text>
+  <!-- outbound flow: server -> NAT -> IGW -> internet -->
+  <path d="M368,205 C300,205 250,200 200,192" fill="none" stroke="#1565c0" stroke-width="1.8" marker-end="url(#a3)"/>
+  <path d="M169,158 C169,120 250,95 300,84" fill="none" stroke="#1565c0" stroke-width="1.8" marker-end="url(#a3)"/>
+  <path d="M310,58 L310,44" stroke="#555" stroke-width="1.5" marker-end="url(#a3b)"/>
+  <text x="205" y="240" font-size="10" fill="#1565c0">① server starts an outbound request…</text>
+  <text x="60" y="118" font-size="10" fill="#1565c0" opacity="0"> </text>
+  <text x="120" y="112" font-size="10" fill="#1565c0">② out via NAT → IGW → internet</text>
+</svg>
+<figcaption>Outbound only: the server (no public IP) sends out through the NAT Gateway, which egresses via the IGW. The internet has no path back in to start a connection.</figcaption>
+</figure>
+
+<div class="cost">
+  <span class="callout-label">Cost radar — this one actually meters</span>
+  Unlike the Internet Gateway (free), a NAT Gateway bills <b>two ways at once</b>: roughly <b>$0.045 per
+  hour</b> it exists <em>plus</em> <b>~$0.045 per GB</b> of data it processes.<a class="cite" href="https://aws.amazon.com/vpc/pricing/" title="VPC pricing">[aws]</a> Running one per AZ for high
+  availability (the blueprint's shape) doubles the hourly charge. It's often the first "why is my VPC costing
+  money?" line item — worth remembering before you build.
+</div>
+
+<h2>Check yourself</h2>
+<p>From memory — and we're deliberately mixing Lesson 2's route table back in.</p>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">Q1.</span> What is the defining property of a NAT Gateway?</div>
+  <button class="opt" data-key="A">It gives each private server its own public IP</button>
+  <button class="opt" data-key="B">It allows outbound traffic but blocks inbound starts</button>
+  <button class="opt" data-key="C">It replaces the need for any Internet Gateway</button>
+  <div class="feedback right" data-for="right">Correct. Connections must start from inside; the NAT relays them out and returns replies, but nothing outside can use it to initiate a connection in.</div>
+  <div class="feedback wrong" data-for="wrong">It's the one-way valve: outbound connections yes, inbound starts no. It doesn't give servers public IPs, and it still relies on the IGW to actually egress.</div>
+</div>
+
+<div class="quiz" data-answer="C">
+  <div class="q"><span class="num">Q2.</span> In the private subnet's route table, where does the <code>0.0.0.0/0</code> route point?</div>
+  <button class="opt" data-key="A">Straight to the Internet Gateway, same as public</button>
+  <button class="opt" data-key="B">Nowhere — a private subnet has no catch-all route</button>
+  <button class="opt" data-key="C">To the NAT Gateway, which then egresses outward</button>
+  <div class="feedback right" data-for="right">Correct. Same catch-all line as Lesson 2, but the target is the NAT Gateway, not the IGW. The changed target is what makes it outbound-only.</div>
+  <div class="feedback wrong" data-for="wrong">It points to the NAT Gateway. It's the same 0.0.0.0/0 catch-all from Lesson 2 — only the target differs (NAT, not IGW), which is what enables safe outbound.</div>
+</div>
+
+<div class="quiz" data-answer="A">
+  <div class="q"><span class="num">Q3.</span> Which subnet does the NAT Gateway itself live in, and why?</div>
+  <button class="opt" data-key="A">A public one, so it can reach the Internet Gateway</button>
+  <button class="opt" data-key="B">A private one, to keep it hidden from all traffic</button>
+  <button class="opt" data-key="C">Either one, since its placement makes no difference</button>
+  <div class="feedback right" data-for="right">Correct. The NAT needs its own route out, so it sits in a public subnet (with the 0.0.0.0/0 → IGW route). Private servers then point at the NAT.</div>
+  <div class="feedback wrong" data-for="wrong">It lives in a public subnet — it needs the 0.0.0.0/0 → IGW route to actually egress. Private servers route to the NAT; the NAT routes to the IGW.</div>
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Primary source · read this next</span>
+  <a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html">“NAT gateways” — AWS VPC User Guide.</a>
+  Read the intro and the "public vs private NAT gateway" section. Note the diagram: it's this lesson, from AWS directly.
+</div>
+
+<div class="ask-teacher">
+  <b>Ask me anything.</b> Wondering how NAT differs from the older "NAT instance," or when people use a
+  <em>private</em> NAT gateway, or why one NAT per AZ instead of sharing one? These are exactly the questions
+  that separate "I read it" from "I get it." Ask away.
+</div>
+
+<nav class="lesson-nav">
+  <a href="0002-route-tables-and-igw.html">← Lesson 2: Route tables &amp; IGW</a>
+  <a href="../reference/blueprint.html">Blueprint ↑</a>
+  <a href="0004-application-load-balancer.html">Lesson 4: Application Load Balancer →</a>
+</nav>
+
+<p class="meta">AWS Networking course · lesson 0003 · built 2026-07-13</p>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

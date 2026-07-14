@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blueprint — Serve an App from a Private Network (AWS)</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Reference · The Compass</p>
+<h1>Blueprint: serving an app to the internet from a private network</h1>
+<p class="subtitle">The whole destination on one page. Every lesson fills in one box below.
+Return here whenever you lose the thread.</p>
+
+<div class="mission">
+  <b>Why this exists →</b> Your <a href="../MISSION.md">mission</a> is to understand this exact
+  picture well enough to draw it from memory and trace a request through it. This page is the map;
+  the lessons are the territory.
+</div>
+
+<figure>
+  <img src="../assets/architecture.svg" alt="AWS architecture diagram: app served to the internet from private subnets with Client VPN admin access" style="width:100%;max-width:820px;">
+  <figcaption>The target architecture. <span class="public">Green</span> = a user's request reaching your app.
+  <span class="private">Blue dashed</span> = a private server reaching out for updates. <span style="color:#b5651d;font-weight:600">Orange</span> = you, the admin, tunnelling in.</figcaption>
+</figure>
+
+<h2>The two journeys this design is built around</h2>
+
+<h3><span class="public">①→②</span> A user loads your app</h3>
+<p>A request comes off <b>the internet</b>, enters the VPC through the <b>Internet Gateway</b>,
+hits the <b>Application Load Balancer</b> sitting in a <span class="public">public subnet</span>,
+which forwards it to one of your <b>EC2 app servers</b> hiding in a <span class="private">private
+subnet</span>. The user never talks to the server directly — and the server has <em>no public IP at all</em>.</p>
+
+<h3><span style="color:#b5651d;font-weight:600">Ⓐ→Ⓑ</span> You need to log into a server</h3>
+<p>Those app servers have no public IP, so you can't SSH straight in from the internet — that's the point.
+Instead you connect through the <b>Client VPN endpoint</b>, which drops your laptop <em>inside</em> the
+VPC's private address space. Now you can reach <code>10.0.11.x</code> as if you were sitting next to it.</p>
+
+<div class="note">
+  <span class="callout-label">The one idea that unlocks the rest</span>
+  A subnet is not "public" because of its name or a checkbox. It is public because its
+  <b>route table</b> sends internet-bound traffic to an <b>Internet Gateway</b>. Change the route,
+  change the nature of the subnet.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html" title="AWS: Internet Gateway">[aws]</a>
+</div>
+
+<h2>Glossary — every box, one line each</h2>
+<dl class="terms">
+  <dt>VPC (Virtual Private Cloud)</dt>
+  <dd>Your own private, isolated network inside AWS, defined by an IP range like <code>10.0.0.0/16</code>.
+    Nothing gets in or out except through gateways you add.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html" title="What is Amazon VPC">[aws]</a></dd>
+
+  <dt>CIDR block</dt>
+  <dd>The notation for an IP range. <code>/16</code> = 65,536 addresses; <code>/24</code> = 256.
+    The smaller the number after the slash, the bigger the range.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html" title="VPC CIDR blocks">[aws]</a></dd>
+
+  <dt>Subnet</dt>
+  <dd>A slice of the VPC's IP range that lives in exactly one Availability Zone. Where your
+    resources actually sit.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html" title="Configure subnets">[aws]</a></dd>
+
+  <dt>Availability Zone (AZ)</dt>
+  <dd>A physically separate datacenter within a region. Spreading subnets across ≥2 AZs is how you
+    survive one datacenter failing.<a class="cite" href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html" title="Regions and Zones">[aws]</a></dd>
+
+  <dt><span class="public">Public subnet</span></dt>
+  <dd>A subnet whose route table has a route to the Internet Gateway. Things here <em>can</em> have public IPs.</dd>
+
+  <dt><span class="private">Private subnet</span></dt>
+  <dd>A subnet with <em>no</em> route to the Internet Gateway. Your app servers live here, unreachable from the open internet.</dd>
+
+  <dt>Route table</dt>
+  <dd>The list of rules ("to reach X, send traffic to Y") attached to a subnet. This is what makes a
+    subnet public or private.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Route_Tables.html" title="Route tables">[aws]</a></dd>
+
+  <dt>Internet Gateway (IGW)</dt>
+  <dd>The one door between your VPC and the public internet. Attaching it + routing to it is what
+    makes public subnets public.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html" title="Internet Gateway">[aws]</a></dd>
+
+  <dt>NAT Gateway</dt>
+  <dd>A one-way valve: lets private servers reach <em>out</em> to the internet (for updates) while
+    blocking anything from reaching <em>in</em>. Bills per hour <b>and</b> per GB.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html" title="NAT Gateway">[aws]</a></dd>
+
+  <dt>Application Load Balancer (ALB)</dt>
+  <dd>The public front door for your app. Takes internet requests and spreads them across your
+    private app servers; the servers stay hidden.<a class="cite" href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html" title="What is an ALB">[aws]</a></dd>
+
+  <dt>EC2 app server</dt>
+  <dd>The virtual machine actually running your app. Lives in a private subnet, no public IP.</dd>
+
+  <dt>Security Group</dt>
+  <dd>A stateful firewall wrapped around each resource (e.g. "only accept traffic from the ALB").
+    Instance-level.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/infrastructure-security.html" title="Security groups vs NACLs">[aws]</a></dd>
+
+  <dt>Client VPN</dt>
+  <dd>A managed VPN endpoint that puts your laptop <em>inside</em> the VPC, so you can administer
+    private servers that have no public IP.<a class="cite" href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/what-is.html" title="What is AWS Client VPN">[aws]</a></dd>
+</dl>
+
+<div class="cost">
+  <span class="callout-label">Cost radar (for when you build)</span>
+  Most of this picture is free to define. The meters that <em>run</em> are: <b>NAT Gateway</b>
+  (per hour + per GB), <b>Client VPN</b> (per association-hour + per connection-hour), the
+  <b>ALB</b> (per hour + per capacity unit), and each <b>public IPv4</b> address (~$0.005/hr).
+  <a class="cite" href="https://aws.amazon.com/vpc/pricing/" title="VPC pricing">[aws]</a>
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Read the source of truth</span>
+  AWS's own tutorial <a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-example-private-subnets-nat.html">“VPC with servers in private subnets and NAT”</a>
+  builds almost exactly this diagram, with real route tables and security-group rules. It's the anchor for the whole course.
+</div>
+
+<div class="ask-teacher">
+  <b>This is your compass, not a test.</b> You are not expected to know all of this yet — the lessons
+  fill it in one box at a time. When any box here feels fuzzy, <b>ask me</b> and we'll zoom in.
+</div>
+
+<p class="meta">AWS Networking course · reference/blueprint · built 2026-07-13</p>
+</body>
+</html>

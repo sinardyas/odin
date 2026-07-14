@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 6 · AWS Client VPN</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 6 · Your way in</p>
+<h1>AWS Client VPN: reaching a server with no public IP</h1>
+<p class="subtitle">The whole design keeps the internet out. This is how <em>you</em> still get in — the VPN you asked about on day one.</p>
+
+<div class="mission">
+  <b>Where this sits →</b> This is the second journey on the <a href="../reference/blueprint.html">blueprint</a>
+  (Ⓐ→Ⓑ) and the reason you started: the app servers have no public IP and their security group only trusts
+  the ALB (Lesson 5). So how do <em>you</em> SSH in to debug or patch? Not by weakening any of that — by
+  tunnelling <b>inside</b> the network with <b>Client VPN</b>.
+</div>
+
+<h2>1. The bind we've deliberately created</h2>
+<p>Every layer so far worked to make the app servers unreachable from the internet: private subnet
+(Lesson 1), no <code>0.0.0.0/0 → igw</code> route (Lesson 2), a security group that only accepts the ALB
+(Lesson 5). That's exactly what we wanted for users — and it locks <em>you</em> out too. You need admin access
+without punching a hole the internet could crawl through.</p>
+
+<p>The tempting-but-wrong fixes:</p>
+<ul>
+  <li><b>Give the server a public IP</b> → throws away the entire private design.</li>
+  <li><b>A bastion / jump host</b> (a small public server you SSH into first) → works, but it's a machine
+    <em>you</em> now have to patch and defend, and it's a permanent target on the internet.</li>
+</ul>
+
+<h2>2. Client VPN puts your laptop <em>inside</em> the VPC</h2>
+<p>An <b>AWS Client VPN</b> is a managed endpoint your laptop connects to with a normal OpenVPN client. Once
+connected, your laptop is handed a private address <em>within the VPC's world</em> — as if it were plugged
+into the network directly. From there you reach <code>10.0.11.5</code> over the same <code>local</code> route
+any internal resource uses (Lesson 2). Nothing was exposed to the internet; you joined the private side.<a class="cite" href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/what-is.html" title="What is AWS Client VPN">[aws]</a></p>
+
+<div class="note">
+  <span class="callout-label">The mental model</span>
+  A bastion host means "SSH to a public machine, then hop inward." Client VPN means "become part of the private
+  network, then talk to anything directly." No public jump box to run, patch, or defend.
+</div>
+
+<h2>3. The four things that define a Client VPN</h2>
+<dl class="terms">
+  <dt>The endpoint</dt>
+  <dd>The managed VPN server AWS runs for you. Your laptop's OpenVPN client dials this.</dd>
+  <dt>Target network (association)</dt>
+  <dd>A subnet in your VPC you associate the endpoint with — this wires it into your routing so connected
+    clients can reach the VPC.<a class="cite" href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/what-is.html" title="Target network">[aws]</a></dd>
+  <dt>Client CIDR range</dt>
+  <dd>A <em>separate</em> IP range (e.g. <code>172.16.0.0/22</code>) handed out to connecting laptops. It must
+    <b>not overlap</b> your VPC's range — remember CIDR from Lesson 1.</dd>
+  <dt>Authentication + authorization rules</dt>
+  <dd>Who may connect (a client certificate, or a company login via SAML/Active Directory) and, once in,
+    <em>which</em> parts of the VPC they're allowed to reach (e.g. "allow <code>10.0.11.0/24</code>").<a class="cite" href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/what-is.html" title="Authorization rules">[aws]</a></dd>
+</dl>
+
+<h2>4. It still has to pass the firewall (Lesson 5 returns)</h2>
+<p>Being inside the network isn't a free pass. Your traffic to the app server still hits that server's
+<b>security group</b>. So the last wiring step is a security-group rule on the app server: <em>allow SSH (port
+22) from the Client VPN</em> — sourced from the client CIDR range or the VPN's own security group. Two
+independent gates — the VPN authorizes you onto the network, the security group permits the specific port —
+and that layering is the point.</p>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 250" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs><marker id="o6" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#b5651d"/></marker></defs>
+  <!-- laptop -->
+  <rect x="24" y="90" width="96" height="52" rx="6" fill="#fff" stroke="#b5651d" stroke-width="1.6"/>
+  <text x="72" y="112" text-anchor="middle" font-size="12" font-weight="700">Your laptop</text>
+  <text x="72" y="128" text-anchor="middle" font-size="9" fill="#6b6b6b">OpenVPN client</text>
+  <!-- VPC -->
+  <rect x="170" y="40" width="426" height="196" rx="8" fill="none" stroke="#8a4a12" stroke-width="1.8"/>
+  <text x="184" y="58" font-size="11" font-weight="700" fill="#8a4a12">VPC 10.0.0.0/16</text>
+  <!-- Client VPN endpoint in a subnet -->
+  <rect x="190" y="70" width="170" height="60" rx="6" fill="#fdf3e9" stroke="#b5651d" stroke-width="1.4"/>
+  <text x="275" y="92" text-anchor="middle" font-size="11" font-weight="700" fill="#8a4a12">Client VPN endpoint</text>
+  <text x="275" y="108" text-anchor="middle" font-size="9" fill="#444">associated to a subnet</text>
+  <text x="275" y="120" text-anchor="middle" font-size="9" fill="#444">client CIDR 172.16.0.0/22</text>
+  <!-- private subnet + server -->
+  <rect x="384" y="132" width="196" height="86" rx="6" fill="#eef4fb" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="396" y="150" font-size="10" font-weight="600" fill="#1565c0">PRIVATE subnet 10.0.11.0/24</text>
+  <rect x="410" y="162" width="150" height="44" rx="4" fill="#fff" stroke="#1565c0" stroke-width="1.3"/>
+  <text x="485" y="180" text-anchor="middle" font-size="11" font-weight="600">EC2 app server</text>
+  <text x="485" y="194" text-anchor="middle" font-size="9" fill="#6b6b6b">SG: allow 22 from VPN</text>
+  <!-- flows -->
+  <path d="M120,112 C150,105 165,102 188,100" fill="none" stroke="#b5651d" stroke-width="2" marker-end="url(#o6)"/>
+  <text x="120" y="80" font-size="10" fill="#b5651d">Ⓐ tunnel in (authenticated)</text>
+  <path d="M300,130 C330,150 360,165 408,180" fill="none" stroke="#b5651d" stroke-width="2" marker-end="url(#o6)"/>
+  <text x="300" y="222" font-size="10" fill="#b5651d">Ⓑ reach 10.0.11.5 over the local route</text>
+</svg>
+<figcaption>Your laptop joins the VPC's private world through the Client VPN endpoint, then reaches the private server directly — no public IP, no jump box.</figcaption>
+</figure>
+
+<div class="note">
+  <span class="callout-label">Not to be confused with…</span>
+  <b>Client VPN</b> connects individual <em>people/laptops</em> into the VPC — that's you. <b>Site-to-Site VPN</b>
+  connects an entire <em>network</em> (an office, another datacenter) to the VPC. You wanted the first one; this
+  lesson is it.
+</div>
+
+<div class="cost">
+  <span class="callout-label">Cost radar — two meters</span>
+  Client VPN bills per <b>subnet-association hour</b> (the endpoint being wired into a subnet) <b>and</b> per
+  <b>active connection hour</b> (each connected laptop).<a class="cite" href="https://aws.amazon.com/vpn/pricing/" title="Client VPN pricing">[aws]</a> The association meter runs even when nobody's connected — so
+  people often associate it only when admin access is needed, or accept the standing cost for always-on access.
+</div>
+
+<h2>Check yourself</h2>
+<p>From memory — interleaving Lessons 1, 2, and 5.</p>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">Q1.</span> What does connecting through a Client VPN actually do for your laptop?</div>
+  <button class="opt" data-key="A">It assigns a public IP to the target app server</button>
+  <button class="opt" data-key="B">It places your laptop inside the VPC's private network</button>
+  <button class="opt" data-key="C">It opens an inbound internet route to the subnet</button>
+  <div class="feedback right" data-for="right">Correct. You're handed a private address in the VPC's world and reach servers over the local route — nothing is exposed to the internet.</div>
+  <div class="feedback wrong" data-for="wrong">It puts your laptop inside the private network, reaching servers over the local route. No public IP is added and no inbound internet route is opened — that's the whole appeal.</div>
+</div>
+
+<div class="quiz" data-answer="C">
+  <div class="q"><span class="num">Q2.</span> After connecting, you still can't SSH to the app server. Most likely missing piece?</div>
+  <button class="opt" data-key="A">The VPC needs a second Internet Gateway attached</button>
+  <button class="opt" data-key="B">The server must be moved into a public subnet first</button>
+  <button class="opt" data-key="C">Its security group doesn't yet allow port 22 from the VPN</button>
+  <div class="feedback right" data-for="right">Correct. Being on the network isn't permission — the server's security group (Lesson 5) still gates the port. Add an allow-22-from-VPN rule.</div>
+  <div class="feedback wrong" data-for="wrong">The security group still gates the port. Being inside the network doesn't bypass it — add an "allow 22 from the VPN" rule. No IGW or subnet move is needed.</div>
+</div>
+
+<div class="quiz" data-answer="A">
+  <div class="q"><span class="num">Q3.</span> Why must the client CIDR range not overlap the VPC's range?</div>
+  <button class="opt" data-key="A">Overlapping addresses would make routing ambiguous</button>
+  <button class="opt" data-key="B">Overlapping ranges cost more per hour to operate</button>
+  <button class="opt" data-key="C">The VPC forbids any subnet smaller than a /22</button>
+  <div class="feedback right" data-for="right">Correct. Clients get addresses from a separate range; if it overlapped the VPC, an address could mean two places at once and routing couldn't decide where to send traffic.</div>
+  <div class="feedback wrong" data-for="wrong">It's about routing: overlapping ranges would make an address ambiguous, so traffic couldn't be routed reliably. It's not a pricing or subnet-size rule.</div>
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Primary source · read this next</span>
+  <a href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/what-is.html">“What is AWS Client VPN?” — AWS Client VPN Administrator Guide.</a>
+  Read the overview and the "Client VPN components" section. It names the endpoint, target network, client CIDR, and authorization rules exactly as above.
+</div>
+
+<div class="ask-teacher">
+  <b>Ask me anything.</b> Curious how certificate (mutual TLS) auth compares to logging in with your company
+  SSO, whether Client VPN can also route your <em>internet</em> traffic (split vs full tunnel), or when a bastion
+  host is still the better call? Ask — you've now got every piece to reason about the trade-offs.
+</div>
+
+<nav class="lesson-nav">
+  <a href="0005-security-groups.html">← Lesson 5: Security Groups</a>
+  <a href="../reference/blueprint.html">Blueprint ↑</a>
+  <a href="0007-capstone.html">Lesson 7: Capstone — trace both journeys →</a>
+</nav>
+
+<p class="meta">AWS Networking course · lesson 0006 · built 2026-07-13</p>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

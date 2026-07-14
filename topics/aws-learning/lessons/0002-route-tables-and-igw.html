@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 2 · Route Tables &amp; the Internet Gateway</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 2 · What makes a subnet public</p>
+<h1>Route tables &amp; the Internet Gateway</h1>
+<p class="subtitle">The promise from Lesson 1, paid off: we open the route table and watch one line turn a subnet public.</p>
+
+<div class="mission">
+  <b>Where this sits →</b> In <a href="0001-the-private-network.html">Lesson 1</a> you learned a subnet
+  is <span class="public">public</span> or <span class="private">private</span> because of routing, not
+  a name. This lesson shows the exact mechanism — the two boxes in the
+  <a href="../reference/blueprint.html">blueprint</a> that connect your VPC to the internet.
+</div>
+
+<h2>1. A route table is a list of "to reach X, go to Y" rules</h2>
+<p>Every subnet is associated with exactly one <b>route table</b>: a short list of rules. Each rule has
+a <b>destination</b> (a CIDR range — remember those from Lesson 1) and a <b>target</b> (where to send
+traffic headed there).<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Route_Tables.html" title="Route tables">[aws]</a> When traffic leaves a resource, AWS scans the table for the
+<em>most specific</em> matching destination and sends it to that target.</p>
+
+<p>Here is the route table of a <span class="private">private</span> subnet — the simplest possible one:</p>
+
+<table>
+  <thead><tr><th>Destination</th><th>Target</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><code>10.0.0.0/16</code></td><td><code>local</code></td><td>"Anything inside my own VPC — I already know how to reach it."</td></tr>
+  </tbody>
+</table>
+
+<p>That single <code>local</code> route is added automatically and can never be removed. It's why any
+two resources in the same VPC can already talk to each other. And because that's the <em>only</em> rule,
+traffic headed anywhere else — the open internet — has <b>nowhere to go</b>. That is precisely what
+makes this subnet private.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html" title="Subnet types">[aws]</a></p>
+
+<h2>2. One extra line makes it public</h2>
+<p>Now the <span class="public">public</span> subnet's route table. It has the same <code>local</code>
+route, plus one more:</p>
+
+<table>
+  <thead><tr><th>Destination</th><th>Target</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><code>10.0.0.0/16</code></td><td><code>local</code></td><td>"Inside my VPC — reach it directly." (same as before)</td></tr>
+    <tr><td class="public"><code>0.0.0.0/0</code></td><td class="public"><code>igw-…</code></td><td><b>"Everywhere else → send to the Internet Gateway."</b></td></tr>
+  </tbody>
+</table>
+
+<p><code>0.0.0.0/0</code> is CIDR for "every address that exists" — the catch-all. It's the
+<em>least</em> specific match, so it only wins when nothing else fits, i.e. for internet-bound traffic.
+Point that catch-all at an <b>Internet Gateway</b> and the subnet becomes public.<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html" title="Internet Gateway">[aws]</a></p>
+
+<div class="note">
+  <span class="callout-label">This is the whole secret</span>
+  Public subnet and private subnet can be <em>identical</em> in every way except this one line.
+  Add <code>0.0.0.0/0 → igw</code> and it's public; remove it and it's private. Same land, different door policy.
+</div>
+
+<h2>3. The Internet Gateway is the door (and it needs three things)</h2>
+<p>An <b>Internet Gateway (IGW)</b> is the single, highly-available doorway between your VPC and the
+public internet. But attaching one isn't enough on its own. For a resource to actually be reachable
+from the internet, <em>all three</em> must be true:<a class="cite" href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html" title="Internet Gateway requirements">[aws]</a></p>
+
+<ol>
+  <li>An IGW is <b>attached</b> to the VPC.</li>
+  <li>The subnet's <b>route table</b> sends <code>0.0.0.0/0</code> to that IGW. <span class="public">(the line above)</span></li>
+  <li>The resource has a <b>public IP address</b>.</li>
+</ol>
+
+<div class="gotcha">
+  <span class="callout-label">Tie it back to the mission</span>
+  In our design the app servers deliberately fail test #3 — they have <b>no public IP</b> and sit in a
+  <span class="private">private</span> subnet. That's the point: the internet can't reach them directly.
+  The public-facing <b>Load Balancer</b> (Lesson 4) is the only thing that satisfies all three — it's the
+  front door, so the servers don't have to be.
+</div>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 250" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <ellipse cx="310" cy="26" rx="70" ry="20" fill="#eef" stroke="#889" stroke-width="1.4"/>
+  <text x="310" y="31" text-anchor="middle" font-size="12" font-weight="700">The Internet</text>
+  <!-- IGW -->
+  <rect x="252" y="64" width="116" height="30" rx="4" fill="#fff" stroke="#b5651d" stroke-width="1.6"/>
+  <text x="310" y="83" text-anchor="middle" font-size="12">Internet Gateway</text>
+  <!-- VPC -->
+  <rect x="24" y="110" width="572" height="126" rx="8" fill="none" stroke="#8a4a12" stroke-width="1.8"/>
+  <text x="38" y="128" font-size="11" font-weight="700" fill="#8a4a12">VPC 10.0.0.0/16</text>
+  <!-- public subnet -->
+  <rect x="44" y="140" width="256" height="80" rx="6" fill="#eef7ef" stroke="#2e7d32" stroke-width="1.4"/>
+  <text x="56" y="158" font-size="11" font-weight="600" fill="#2e7d32">PUBLIC subnet</text>
+  <text x="56" y="176" font-size="10" fill="#444">route: 0.0.0.0/0 → igw ✓</text>
+  <text x="56" y="192" font-size="10" fill="#444">reachable from internet</text>
+  <!-- private subnet -->
+  <rect x="320" y="140" width="256" height="80" rx="6" fill="#eef4fb" stroke="#1565c0" stroke-width="1.4"/>
+  <text x="332" y="158" font-size="11" font-weight="600" fill="#1565c0">PRIVATE subnet</text>
+  <text x="332" y="176" font-size="10" fill="#444">route: only 10.0.0.0/16 → local</text>
+  <text x="332" y="192" font-size="10" fill="#444">no way out to the internet</text>
+  <!-- arrows -->
+  <line x1="310" y1="46" x2="310" y2="62" stroke="#555" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="290" y1="94" x2="200" y2="138" stroke="#2e7d32" stroke-width="1.8" marker-end="url(#a2g)"/>
+  <line x1="360" y1="94" x2="448" y2="138" stroke="#c0392b" stroke-width="1.6" stroke-dasharray="4 3"/>
+  <text x="470" y="120" font-size="10" fill="#c0392b">✗ no route</text>
+  <defs>
+    <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#555"/></marker>
+    <marker id="a2g" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2e7d32"/></marker>
+  </defs>
+</svg>
+<figcaption>Same VPC, same IGW. The public subnet has the <code>0.0.0.0/0 → igw</code> route; the private one doesn't. That's the entire difference.</figcaption>
+</figure>
+
+<h2>Check yourself</h2>
+<p>From memory — and notice we're mixing in Lesson 1's CIDR idea on purpose.</p>
+
+<div class="quiz" data-answer="C">
+  <div class="q"><span class="num">Q1.</span> What does the route <code>0.0.0.0/0</code> represent in a route table?</div>
+  <button class="opt" data-key="A">The single reserved address at a subnet's start</button>
+  <button class="opt" data-key="B">Only the addresses inside your own private VPC</button>
+  <button class="opt" data-key="C">Every address — the catch-all for outside traffic</button>
+  <div class="feedback right" data-for="right">Correct. /0 fixes zero bits, so it matches every address. As the least-specific route it only wins for traffic not headed inside the VPC.</div>
+  <div class="feedback wrong" data-for="wrong">/0 fixes zero bits, so it matches every possible address — the catch-all. It's how "send the internet-bound stuff to the gateway" is written.</div>
+</div>
+
+<div class="quiz" data-answer="B">
+  <div class="q"><span class="num">Q2.</span> Two subnets are identical except their route tables. What makes one public?</div>
+  <button class="opt" data-key="A">It was given a larger block of IP addresses</button>
+  <button class="opt" data-key="B">It has a route sending 0.0.0.0/0 to the gateway</button>
+  <button class="opt" data-key="C">It sits inside a second Availability Zone</button>
+  <div class="feedback right" data-for="right">Correct — the presence of the 0.0.0.0/0 → Internet Gateway route is the entire difference. Remove it and the same subnet becomes private.</div>
+  <div class="feedback wrong" data-for="wrong">It's the 0.0.0.0/0 → Internet Gateway route. Size and AZ don't decide public vs private — routing does.</div>
+</div>
+
+<div class="quiz" data-answer="A">
+  <div class="q"><span class="num">Q3.</span> Your app server is in a public subnet but still unreachable from the internet. Likeliest missing piece?</div>
+  <button class="opt" data-key="A">The server has not been given a public IP address</button>
+  <button class="opt" data-key="B">The subnet needs a second route table attached</button>
+  <button class="opt" data-key="C">The VPC block is too small to allow any traffic</button>
+  <div class="feedback right" data-for="right">Correct. Reachability needs all three: IGW attached, a 0.0.0.0/0 route to it, AND a public IP on the resource. In a public subnet with the route present, the missing public IP is the usual culprit.</div>
+  <div class="feedback wrong" data-for="wrong">All three conditions must hold: IGW attached, the 0.0.0.0/0 route present, and a public IP on the resource. In a public subnet, the missing public IP is the usual culprit.</div>
+</div>
+
+<div class="primary-source">
+  <span class="callout-label">Primary source · read this next</span>
+  <a href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html">“Internet gateways” — AWS VPC User Guide.</a>
+  It states the public-vs-private rule in one sentence and lists the exact requirements for internet reachability. Short and authoritative.
+</div>
+
+<div class="ask-teacher">
+  <b>Ask me anything.</b> Want to see how AWS picks the "most specific" route when several match? Curious
+  why the <code>local</code> route can't be deleted, or what happens if two route tables conflict? Ask — this
+  is the layer where a lot of "why can't my instance connect?" mysteries get solved.
+</div>
+
+<nav class="lesson-nav">
+  <a href="0001-the-private-network.html">← Lesson 1: The private network</a>
+  <a href="../reference/blueprint.html">Blueprint ↑</a>
+  <a href="0003-nat-gateway.html">Lesson 3: NAT Gateway →</a>
+</nav>
+
+<p class="meta">AWS Networking course · lesson 0002 · built 2026-07-13</p>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
